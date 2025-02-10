@@ -1,46 +1,92 @@
-import { Request, Response } from "express";
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
-import User from "../models/User.js";
+const User = require('../models/User');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const nodemailer = require('nodemailer');
 
-export const registerUser = async (req: Request, res: Response) => {
+const generateToken = (id: string) => {
+  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
+};
+
+const sendVerificationEmail = async (user: { email: string }, token: string) => {
+  const transporter = nodemailer.createTransport({
+    service: 'Gmail',
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+  });
+
+  const mailOptions = {
+    from: process.env.EMAIL_USER,
+    to: user.email,
+    subject: 'Email Verification',
+    text: `Please verify your email by clicking the following link: ${process.env.CLIENT_URL}/verify-email?token=${token}`,
+  };
+
+  await transporter.sendMail(mailOptions);
+};
+
+import { Request, Response } from 'express';
+
+exports.signup = async (req: Request, res: Response) => {
+  const { email, password } = req.body;
   try {
-    const { name, email, password } = req.body;
-
-    // Check if user exists
     const userExists = await User.findOne({ email });
-    if (userExists) return res.status(400).json({ message: "User already exists" });
+    if (userExists) {
+      return res.status(400).json({ message: 'User already exists' });
+    }
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Create new user
-    const user = await User.create({ name, email, password: hashedPassword });
+    const user = await User.create({
+      email,
+      password: hashedPassword,
+      isVerified: false,
+    });
 
-    res.status(201).json({ message: "User registered successfully", user });
+    const token = generateToken(user._id);
+    await sendVerificationEmail(user, token);
+
+    res.status(201).json({ message: 'Verification email sent. Please check your inbox.' });
   } catch (error) {
-    res.status(500).json({ message: "Server error", error });
+    res.status(400).json({ message: (error as Error).message });
   }
 };
 
-export const loginUser = async (req: Request, res: Response) => {
+exports.login = async (req: Request, res: Response) => {
+  const { email, password } = req.body;
   try {
-    const { email, password } = req.body;
     const user = await User.findOne({ email });
-
-    if (!user) return res.status(400).json({ message: "Invalid credentials" });
-
-    // Check password
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
-
-    // Generate token
-    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET as string, {
-      expiresIn: "7d",
-    });
-
-    res.json({ message: "Login successful", token });
+    if (user && (await bcrypt.compare(password, user.password))) {
+      if (!user.isVerified) {
+        return res.status(401).json({ message: 'Please verify your email first.' });
+      }
+      res.json({
+        _id: user._id,
+        email: user.email,
+        token: generateToken(user._id),
+      });
+    } else {
+      res.status(401).json({ message: 'Invalid credentials' });
+    }
   } catch (error) {
-    res.status(500).json({ message: "Server error", error });
+    res.status(400).json({ message: (error as Error).message });
+  }
+};
+
+exports.verifyEmail = async (req: Request, res: Response) => {
+  const { token } = req.query;
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id);
+    if (!user) {
+      return res.status(400).json({ message: 'Invalid token' });
+    }
+    user.isVerified = true;
+    await user.save();
+    res.status(200).json({ message: 'Email verified successfully' });
+  } catch (error) {
+    res.status(400).json({ message: (error as Error).message });
   }
 };

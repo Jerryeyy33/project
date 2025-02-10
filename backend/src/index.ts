@@ -1,28 +1,20 @@
-import express, { Request, Response } from "express";
-import cors from "cors";
+import express from 'express';
+import dotenv from 'dotenv';
+import connectDB from './config/db.js';
+
+dotenv.config(); // Load environment variables from .env file
 
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5002;
 
-// Middleware
-app.use(cors());
+connectDB();
+
 app.use(express.json());
 
-// Admin API Route
-app.get("/api/admin", (req: Request, res: Response) => {
-    res.json({ message: "Admin data fetched successfully" });
+app.get('/', (req, res) => {
+  res.send('API is running...');
 });
 
-// Login API Route (Example)
-app.post("/api/login", (req: Request, res: Response) => {
-    const { username, password } = req.body;
-
-    if (username === "admin" && password === "password") {
-        res.json({ message: "Login successful", token: "fake-jwt-token" });
-    } else {
-        res.status(401).json({ message: "Invalid credentials" });
-    }
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
-
-// Start Server
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
